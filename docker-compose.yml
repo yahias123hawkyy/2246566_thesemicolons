@@ -1,0 +1,142 @@
+services:
+
+  # ── Seismic signal simulator (provided — do not modify) ────────────────────
+  # No healthcheck: the simulator image has no curl/wget. The broker already
+  # retries the /api/devices/ call every 5 s until the simulator is ready.
+  simulator:
+    image: seismic-signal-simulator:multiarch_v1
+    networks:
+      - seismic-net
+    ports:
+      - "8080:8080"
+    environment:
+      SAMPLING_RATE_HZ:          "20"
+      AUTO_SHUTDOWN_ENABLED:     "true"
+      AUTO_SHUTDOWN_MIN_SECONDS: "30"
+      AUTO_SHUTDOWN_MAX_SECONDS: "90"
+
+  # ── MongoDB shared persistence layer ───────────────────────────────────────
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    networks:
+      - seismic-net
+    environment:
+      MONGO_INITDB_DATABASE: seismic
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Broker (neutral region — fan-out only, no processing) ──────────────────
+  # depends_on simulator with no condition: just waits for the container to
+  # start. The broker's own retry loop handles the case where the simulator
+  # HTTP API isn't ready yet.
+  broker:
+    build:
+      context: ./source/broker
+    restart: unless-stopped
+    networks:
+      - seismic-net
+    environment:
+      SIMULATOR_HTTP:    "http://simulator:8080"
+      SIMULATOR_WS:      "ws://simulator:8080"
+      BROKER_PORT:       "9000"
+      RETRY_INTERVAL_MS: "5000"
+    ports:
+      - "9000:9000"
+    depends_on:
+      - simulator
+
+  # ── Processing replica 1 ───────────────────────────────────────────────────
+  processor1:
+    build:
+      context: ./source/processor
+    restart: on-failure
+    networks:
+      - seismic-net
+    environment:
+      BROKER_WS:        "ws://broker:9000"
+      SIMULATOR_HTTP:   "http://simulator:8080"
+      MONGO_URI:        "mongodb://mongo:27017/seismic"
+      PORT:             "3001"
+      SAMPLING_RATE_HZ: "20"
+      WINDOW_SIZE:      "64"
+      REPLICA_ID:       "processor1"
+    depends_on:
+      broker:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+
+  # ── Processing replica 2 ───────────────────────────────────────────────────
+  processor2:
+    build:
+      context: ./source/processor
+    restart: on-failure
+    networks:
+      - seismic-net
+    environment:
+      BROKER_WS:        "ws://broker:9000"
+      SIMULATOR_HTTP:   "http://simulator:8080"
+      MONGO_URI:        "mongodb://mongo:27017/seismic"
+      PORT:             "3001"
+      SAMPLING_RATE_HZ: "20"
+      WINDOW_SIZE:      "64"
+      REPLICA_ID:       "processor2"
+    depends_on:
+      broker:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+
+  # ── Processing replica 3 ───────────────────────────────────────────────────
+  processor3:
+    build:
+      context: ./source/processor
+    restart: on-failure
+    networks:
+      - seismic-net
+    environment:
+      BROKER_WS:        "ws://broker:9000"
+      SIMULATOR_HTTP:   "http://simulator:8080"
+      MONGO_URI:        "mongodb://mongo:27017/seismic"
+      PORT:             "3001"
+      SAMPLING_RATE_HZ: "20"
+      WINDOW_SIZE:      "64"
+      REPLICA_ID:       "processor3"
+    depends_on:
+      broker:
+        condition: service_started
+      mongo:
+        condition: service_healthy
+
+  # ── Gateway (single entry point + dashboard) ───────────────────────────────
+  gateway:
+    build:
+      context: ./source/gateway
+    restart: unless-stopped
+    networks:
+      - seismic-net
+    environment:
+      PORT:               "8000"
+      PROCESSOR_URLS:     "http://processor1:3001,http://processor2:3001,http://processor3:3001"
+      SIMULATOR_HTTP:     "http://simulator:8080"
+      HEALTH_INTERVAL_MS: "5000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - processor1
+      - processor2
+      - processor3
+
+networks:
+  seismic-net:
+    driver: bridge
+
+volumes:
+  mongo-data:

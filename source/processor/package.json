@@ -1,0 +1,15 @@
+{
+  "name": "processor",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "eventsource": "^2.0.2",
+    "fft-js": "^0.0.12",
+    "mongodb": "^6.6.0",
+    "ws": "^8.17.0"
+  }
+}
