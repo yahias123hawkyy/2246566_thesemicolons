@@ -1,6 +1,5 @@
 services:
 
-  # ── Seismic signal simulator (provided — do not modify) ────────────────────
   # No healthcheck: the simulator image has no curl/wget. The broker already
   # retries the /api/devices/ call every 5 s until the simulator is ready.
   simulator:
